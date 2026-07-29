@@ -1,7 +1,6 @@
 fastapi
 uvicorn
-google-genai
-supabase
 requests
 pydantic
-python-multipart
+google-genai
+supabase

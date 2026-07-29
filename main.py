@@ -10,6 +10,10 @@ from supabase import create_client, Client
 
 app = FastAPI()
 
+@app.get("/")
+def home():
+    return {"message": "Bot Keuangan WA Berhasil Aktif!"}
+
 # 🔑 CONFIG (Membaca kunci dari environment server)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
