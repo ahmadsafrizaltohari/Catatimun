@@ -16,8 +16,8 @@ def home():
 
 # 🔑 CONFIG (Membaca kunci dari environment server)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-SUPABASE_URL = os.getenv("SUPABASE_URL") or "https://yaamohkupbysxjvpyhby.supabase.co"
-SUPABASE_KEY = os.getenv("SUPABASE_KEY") or "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlhYW1vaGt1cGJ5c3hqdnB5aGJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUyMzY3MDUsImV4cCI6MjEwMDgxMjcwNX0.UeNlyr6QQDpbmQ2wwGnb3FhjuFb1bNgq0S48SUozsX8"
+SUPABASE_URL = "https://yaamohkupbysxjvpyhby.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlhYW1vaGt1cGJ5c3hqdnB5aGJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUyMzY3MDUsImV4cCI6MjEwMDgxMjcwNX0.UeNlyr6QQDpbmQ2wwGnb3FhjuFb1bNgq0S48SUozsX8"
 FONNTE_TOKEN = os.getenv("FONNTE_TOKEN")
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
