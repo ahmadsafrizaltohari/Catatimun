@@ -3,8 +3,6 @@ import json
 import requests
 from datetime import datetime, date
 from fastapi import FastAPI, Request
-from google import genai
-from google.genai import types
 from pydantic import BaseModel, Field
 from supabase import create_client, Client
 
@@ -15,7 +13,7 @@ def home():
     return {"message": "Bot Keuangan WA Berhasil Aktif!"}
 
 # 🔑 CONFIG
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 SUPABASE_URL = "https://yaamohkupbysxjvpyhby.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlhYW1vaGt1cGJ5c3hqdnB5aGJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUyMzY3MDUsImV4cCI6MjEwMDgxMjcwNX0.UeNlyr6QQDpbmQ2wwGnb3FhjuFb1bNgq0S48SUozsX8"
 FONNTE_TOKEN = os.getenv("FONNTE_TOKEN")
@@ -25,22 +23,12 @@ ALLOWED_NUMBERS = [
     "62882000805545",
 ]
 
-gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 NAMA_BULAN = [
     "", "Januari", "Februari", "Maret", "April", "Mei", "Juni",
     "Juli", "Agustus", "September", "Oktober", "November", "Desember"
 ]
-
-class TransaksiItem(BaseModel):
-    amount: float = Field(description="Nominal uang dalam angka saja")
-    type: str = Field(description="expense atau income")
-    category: str = Field(description="Kategori transaksi")
-    description: str = Field(description="Penjelasan singkat")
-
-class TransaksiList(BaseModel):
-    transaksi: list[TransaksiItem]
 
 def kirim_balasan_wa(target: str, teks: str):
     url = "https://api.fonnte.com/send"
@@ -219,48 +207,62 @@ async def webhook_receiver(request: Request):
             
         kirim_balasan_wa(sender_number, balasan)
 
-    # 3. JIKA PESAN BIASA (PENCATATAN TRANSAKSI VIA GEMINI AI)
+    # 3. JIKA PESAN BIASA (PENCATATAN TRANSAKSI VIA DEEPSEEK AI)
     else:
         try:
-            if not GEMINI_API_KEY:
-                raise Exception("GEMINI_API_KEY belum terpasang di Environment Variables!")
+            if not DEEPSEEK_API_KEY:
+                raise Exception("DEEPSEEK_API_KEY belum terpasang di Environment Variables!")
 
-            response = gemini_client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=pesan_text,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=TransaksiList,
-                    system_instruction="Kamu adalah asisten keuangan. Ekstrak pesan menjadi data transaksi."
-                )
+            # Panggil API DeepSeek
+            deepseek_url = "https://api.deepseek.com/chat/completions"
+            headers = {
+                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            
+            prompt_system = (
+                "Kamu adalah asisten ekstraksi keuangan. Tugasmu mengekstraksi pesan pengguna menjadi data transaksi keuangan "
+                "dalam format JSON valid.\n"
+                "Format wajib output JSON:\n"
+                "{\n"
+                '  "transaksi": [\n'
+                '    {"amount": 15000, "type": "expense", "category": "Makanan", "description": "Beli bakso"}\n'
+                '  ]\n'
+                "}\n"
+                'Aturan: "type" hanya boleh "expense" atau "income". "amount" berupa angka saja.'
             )
-            
-            raw_text = response.text.strip()
-            # Pembersihan tanda markdown jika Gemini membalas dengan ```json ... ```
-            if raw_text.startswith("```"):
-                lines = raw_text.split("\n")
-                raw_text = "\n".join(lines[1:-1]).strip()
 
-            parsed_data = json.loads(raw_text)
+            payload = {
+                "model": "deepseek-chat",
+                "messages": [
+                    {"role": "system", "content": prompt_system},
+                    {"role": "user", "content": pesan_text}
+                ],
+                "response_format": {"type": "json_object"}
+            }
+
+            res = requests.post(deepseek_url, headers=headers, json=payload, timeout=30)
+            res_json = res.json()
+
+            if res.status_code != 200:
+                raise Exception(f"API Error {res.status_code}: {res_json.get('error', {}).get('message', res.text)}")
+
+            content = res_json["choices"][0]["message"]["content"]
+            parsed_data = json.loads(content)
             
-            if isinstance(parsed_data, list):
-                daftar_transaksi = parsed_data
-            elif isinstance(parsed_data, dict):
-                daftar_transaksi = parsed_data.get("transaksi", [])
-            else:
-                daftar_transaksi = []
+            daftar_transaksi = parsed_data.get("transaksi", [])
             
             if not daftar_transaksi:
                 kirim_balasan_wa(sender_number, "⚠️ Pesan tidak terdeteksi sebagai transaksi keuangan.")
                 return {"status": "success"}
 
-            teks_balasan = "✅ *Transaksi Berhasil Dicatat!*\n\n"
+            teks_balasan = "✅ *Transaksi Berhasil Dicatat (via DeepSeek)!*\n\n"
             
             for item in daftar_transaksi:
-                amount = item.get("amount") if isinstance(item, dict) else item.amount
-                typ = item.get("type") if isinstance(item, dict) else item.type
-                category = item.get("category") if isinstance(item, dict) else item.category
-                description = item.get("description") if isinstance(item, dict) else item.description
+                amount = item.get("amount", 0)
+                typ = item.get("type", "expense")
+                category = item.get("category", "Lain-lain")
+                description = item.get("description", "Transaksi")
 
                 supabase.table("transactions").insert({
                     "user": sender_number,
@@ -276,8 +278,7 @@ async def webhook_receiver(request: Request):
             kirim_balasan_wa(sender_number, teks_balasan)
                 
         except Exception as e:
-            print("❌ Error AI/Supabase:", e)
-            # 💡 Mengirimkan pesan error asli langsung ke WA agar penyebabnya langsung ketahuan!
+            print("❌ Error DeepSeek/Supabase:", e)
             kirim_balasan_wa(sender_number, f"❌ Error detail: {str(e)}")
             
     return {"status": "success"}
