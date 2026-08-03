@@ -22,8 +22,7 @@ FONNTE_TOKEN = os.getenv("FONNTE_TOKEN")
 
 # 🛡️ DAFTAR NOMOR WA YANG DIIZINKAN (Gunakan format 62...)
 ALLOWED_NUMBERS = [
-    "62882000805545",  # 👈 Ganti dengan nomor WA utama kamu!
-    # "6289876543210", # Tambah nomor lain di sini jika ada
+    "62882000805545",
 ]
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
@@ -34,11 +33,17 @@ NAMA_BULAN = [
     "Juli", "Agustus", "September", "Oktober", "November", "Desember"
 ]
 
-class Transaksi(BaseModel):
+# ==================== PYDANTIC MODELS ====================
+
+class TransaksiItem(BaseModel):
     amount: float = Field(description="Nominal uang dalam angka saja")
     type: str = Field(description="expense atau income")
     category: str = Field(description="Kategori transaksi")
     description: str = Field(description="Penjelasan singkat")
+
+class TransaksiList(BaseModel):
+    transaksi: list[TransaksiItem]
+
 
 def kirim_balasan_wa(target: str, teks: str):
     url = "https://api.fonnte.com/send"
@@ -221,21 +226,27 @@ async def webhook_receiver(request: Request):
     else:
         try:
             response = gemini_client.models.generate_content(
-                model="gemini-2.0-flash", # Fixed model name!
+                model="gemini-2.0-flash",
                 contents=pesan_text,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
-                    response_schema=list[Transaksi],
+                    response_schema=TransaksiList,  # Pakai Wrapper Class
                     system_instruction="Kamu adalah asisten keuangan. Ekstrak pesan menjadi data transaksi."
                 )
             )
             
-            daftar_transaksi = json.loads(response.text)
+            parsed_data = json.loads(response.text)
+            daftar_transaksi = parsed_data.get("transaksi", [])
+            
+            if not daftar_transaksi:
+                kirim_balasan_wa(sender_number, "⚠️ Pesan tidak terdeteksi sebagai transaksi keuangan.")
+                return {"status": "success"}
+
             teks_balasan = "✅ *Transaksi Berhasil Dicatat!*\n\n"
             
             for item in daftar_transaksi:
                 supabase.table("transactions").insert({
-                    "user": sender_number, # Menyimpan nomor pengirim ke kolom "user"
+                    "user": sender_number,  # Pastikan kolom "user" sudah ada di Supabase
                     "amount": item["amount"],
                     "type": item["type"],
                     "category": item["category"],
@@ -248,7 +259,7 @@ async def webhook_receiver(request: Request):
             kirim_balasan_wa(sender_number, teks_balasan)
                 
         except Exception as e:
-            print("❌ Error AI:", e)
+            print("❌ Error AI/Supabase:", e)
             kirim_balasan_wa(sender_number, "❌ Gagal memproses pesan. Pastikan formatnya jelas.")
             
     return {"status": "success"}
