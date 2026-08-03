@@ -33,8 +33,6 @@ NAMA_BULAN = [
     "Juli", "Agustus", "September", "Oktober", "November", "Desember"
 ]
 
-# ==================== PYDANTIC MODELS ====================
-
 class TransaksiItem(BaseModel):
     amount: float = Field(description="Nominal uang dalam angka saja")
     type: str = Field(description="expense atau income")
@@ -43,7 +41,6 @@ class TransaksiItem(BaseModel):
 
 class TransaksiList(BaseModel):
     transaksi: list[TransaksiItem]
-
 
 def kirim_balasan_wa(target: str, teks: str):
     url = "https://api.fonnte.com/send"
@@ -171,7 +168,7 @@ def handle_hapus_semua_transaksi(user_number: str) -> str:
         return "🗑️ *SEMUA TRANSAKSI KAMU BERHASIL DIHAPUS*\n\nDatabase transaksi kamu sekarang sudah bersih kembali."
     except Exception as e:
         print("❌ Error hapus data:", e)
-        return "❌ Gagal menghapus transaksi dari database."
+        return f"❌ Gagal menghapus transaksi dari database: {str(e)}"
 
 def handle_menu() -> str:
     """Menampilkan daftar perintah"""
@@ -225,18 +222,33 @@ async def webhook_receiver(request: Request):
     # 3. JIKA PESAN BIASA (PENCATATAN TRANSAKSI VIA GEMINI AI)
     else:
         try:
+            if not GEMINI_API_KEY:
+                raise Exception("GEMINI_API_KEY belum terpasang di Environment Variables!")
+
             response = gemini_client.models.generate_content(
                 model="gemini-2.0-flash",
                 contents=pesan_text,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
-                    response_schema=TransaksiList,  # Pakai Wrapper Class
+                    response_schema=TransaksiList,
                     system_instruction="Kamu adalah asisten keuangan. Ekstrak pesan menjadi data transaksi."
                 )
             )
             
-            parsed_data = json.loads(response.text)
-            daftar_transaksi = parsed_data.get("transaksi", [])
+            raw_text = response.text.strip()
+            # Pembersihan tanda markdown jika Gemini membalas dengan ```json ... ```
+            if raw_text.startswith("```"):
+                lines = raw_text.split("\n")
+                raw_text = "\n".join(lines[1:-1]).strip()
+
+            parsed_data = json.loads(raw_text)
+            
+            if isinstance(parsed_data, list):
+                daftar_transaksi = parsed_data
+            elif isinstance(parsed_data, dict):
+                daftar_transaksi = parsed_data.get("transaksi", [])
+            else:
+                daftar_transaksi = []
             
             if not daftar_transaksi:
                 kirim_balasan_wa(sender_number, "⚠️ Pesan tidak terdeteksi sebagai transaksi keuangan.")
@@ -245,21 +257,27 @@ async def webhook_receiver(request: Request):
             teks_balasan = "✅ *Transaksi Berhasil Dicatat!*\n\n"
             
             for item in daftar_transaksi:
+                amount = item.get("amount") if isinstance(item, dict) else item.amount
+                typ = item.get("type") if isinstance(item, dict) else item.type
+                category = item.get("category") if isinstance(item, dict) else item.category
+                description = item.get("description") if isinstance(item, dict) else item.description
+
                 supabase.table("transactions").insert({
-                    "user": sender_number,  # Pastikan kolom "user" sudah ada di Supabase
-                    "amount": item["amount"],
-                    "type": item["type"],
-                    "category": item["category"],
-                    "description": item["description"]
+                    "user": sender_number,
+                    "amount": amount,
+                    "type": typ,
+                    "category": category,
+                    "description": description
                 }).execute()
                 
-                nominal_fmt = f"{int(item['amount']):,}".replace(",", ".")
-                teks_balasan += f"• *{item['description']}*: Rp{nominal_fmt} ({item['category']})\n"
+                nominal_fmt = f"{int(amount):,}".replace(",", ".")
+                teks_balasan += f"• *{description}*: Rp{nominal_fmt} ({category})\n"
             
             kirim_balasan_wa(sender_number, teks_balasan)
                 
         except Exception as e:
             print("❌ Error AI/Supabase:", e)
-            kirim_balasan_wa(sender_number, "❌ Gagal memproses pesan. Pastikan formatnya jelas.")
+            # 💡 Mengirimkan pesan error asli langsung ke WA agar penyebabnya langsung ketahuan!
+            kirim_balasan_wa(sender_number, f"❌ Error detail: {str(e)}")
             
     return {"status": "success"}
