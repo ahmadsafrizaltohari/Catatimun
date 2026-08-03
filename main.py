@@ -14,11 +14,17 @@ app = FastAPI()
 def home():
     return {"message": "Bot Keuangan WA Berhasil Aktif!"}
 
-# 🔑 CONFIG (Membaca kunci dari environment server)
+# 🔑 CONFIG
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 SUPABASE_URL = "https://yaamohkupbysxjvpyhby.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlhYW1vaGt1cGJ5c3hqdnB5aGJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUyMzY3MDUsImV4cCI6MjEwMDgxMjcwNX0.UeNlyr6QQDpbmQ2wwGnb3FhjuFb1bNgq0S48SUozsX8"
 FONNTE_TOKEN = os.getenv("FONNTE_TOKEN")
+
+# 🛡️ DAFTAR NOMOR WA YANG DIIZINKAN (Gunakan format 62...)
+ALLOWED_NUMBERS = [
+    "62882000805545",  # 👈 Ganti dengan nomor WA utama kamu!
+    # "6289876543210", # Tambah nomor lain di sini jika ada
+]
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -45,12 +51,13 @@ def kirim_balasan_wa(target: str, teks: str):
 
 # ==================== FUNGSIONALITAS COMMAND ====================
 
-def handle_laporan_hari_ini() -> str:
-    """Rekap transaksi hari ini"""
+def handle_laporan_hari_ini(user_number: str) -> str:
+    """Rekap transaksi hari ini khusus untuk user tertentu"""
     today_str = date.today().isoformat()
     
     res = supabase.table("transactions") \
         .select("*") \
+        .eq("user", user_number) \
         .gte("created_at", f"{today_str}T00:00:00") \
         .lte("created_at", f"{today_str}T23:59:59") \
         .execute()
@@ -86,8 +93,8 @@ def handle_laporan_hari_ini() -> str:
         f"💰 Total Pemasukan: *Rp{tot_inc_fmt}*"
     )
 
-def handle_laporan_bulanan() -> str:
-    """Rekap transaksi bulan ini dikelompokkan per kategori"""
+def handle_laporan_bulanan(user_number: str) -> str:
+    """Rekap transaksi bulan ini dikelompokkan per kategori khusus user tertentu"""
     today = date.today()
     first_day = date(today.year, today.month, 1).strftime("%Y-%m-%dT00:00:00")
     
@@ -98,6 +105,7 @@ def handle_laporan_bulanan() -> str:
 
     res = supabase.table("transactions") \
         .select("*") \
+        .eq("user", user_number) \
         .gte("created_at", first_day) \
         .lt("created_at", next_month_first_day) \
         .execute()
@@ -151,11 +159,11 @@ def handle_laporan_bulanan() -> str:
     )
     return msg
 
-def handle_hapus_semua_transaksi() -> str:
-    """Menghapus seluruh record dari tabel transactions"""
+def handle_hapus_semua_transaksi(user_number: str) -> str:
+    """Menghapus seluruh record transaksi khusus milik user ini saja"""
     try:
-        supabase.table("transactions").delete().gte("created_at", "1970-01-01T00:00:00").execute()
-        return "🗑️ *SEMUA TRANSAKSI BERHASIL DIHAPUS*\n\nDatabase transaksi kamu sekarang sudah bersih kembali."
+        supabase.table("transactions").delete().eq("user", user_number).execute()
+        return "🗑️ *SEMUA TRANSAKSI KAMU BERHASIL DIHAPUS*\n\nDatabase transaksi kamu sekarang sudah bersih kembali."
     except Exception as e:
         print("❌ Error hapus data:", e)
         return "❌ Gagal menghapus transaksi dari database."
@@ -166,7 +174,7 @@ def handle_menu() -> str:
         "🤖 *DAFTAR COMMAND BOT KEUNGAN*\n\n"
         "• `#laporanhariini` atau `#laporan` : Rekap transaksi hari ini\n"
         "• `#laporanbulanan` atau `#bulan` : Rekap per kategori bulan ini\n"
-        "• `#hapustransaksi` : Hapus seluruh data transaksi\n"
+        "• `#hapustransaksi` : Hapus seluruh data transaksi kamu\n"
         "• `#menu` atau `#help` : Tampilkan menu ini\n\n"
         "💡 *Tips:* Kirim pesan biasa tanpa `#` untuk mencatat transaksi via AI."
     )
@@ -187,16 +195,21 @@ async def webhook_receiver(request: Request):
     if not pesan_text or not sender_number:
         return {"status": "ignored"}
 
-    # 1. JIKA PESAN BERAWALAN COMMAND '#'
+    # 🛑 1. CEK WHITELIST: Abaikan jika nomor pengirim tidak terdaftar
+    if sender_number not in ALLOWED_NUMBERS:
+        print(f"⚠️ Pesan dari {sender_number} diabaikan (Tidak terdaftar).")
+        return {"status": "ignored", "reason": "Unauthorized number"}
+
+    # 2. JIKA PESAN BERAWALAN COMMAND '#'
     if pesan_text.startswith("#"):
         command = pesan_text.split()[0].lower()
         
         if command in ["#laporanhariini", "#laporan", "#hariini"]:
-            balasan = handle_laporan_hari_ini()
+            balasan = handle_laporan_hari_ini(sender_number)
         elif command in ["#laporanbulanan", "#bulan"]:
-            balasan = handle_laporan_bulanan()
+            balasan = handle_laporan_bulanan(sender_number)
         elif command in ["#hapustransaksi", "#hapussemua"]:
-            balasan = handle_hapus_semua_transaksi()
+            balasan = handle_hapus_semua_transaksi(sender_number)
         elif command in ["#menu", "#help"]:
             balasan = handle_menu()
         else:
@@ -204,11 +217,11 @@ async def webhook_receiver(request: Request):
             
         kirim_balasan_wa(sender_number, balasan)
 
-    # 2. JIKA PESAN BIASA (PENCATATAN TRANSAKSI VIA GEMINI AI)
+    # 3. JIKA PESAN BIASA (PENCATATAN TRANSAKSI VIA GEMINI AI)
     else:
         try:
             response = gemini_client.models.generate_content(
-                model="gemini-3-flash-preview",
+                model="gemini-2.0-flash", # Fixed model name!
                 contents=pesan_text,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
@@ -222,6 +235,7 @@ async def webhook_receiver(request: Request):
             
             for item in daftar_transaksi:
                 supabase.table("transactions").insert({
+                    "user": sender_number, # Menyimpan nomor pengirim ke kolom "user"
                     "amount": item["amount"],
                     "type": item["type"],
                     "category": item["category"],
