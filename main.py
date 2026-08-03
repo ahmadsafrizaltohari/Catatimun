@@ -228,12 +228,12 @@ async def webhook_receiver(request: Request):
                 raise Exception("GEMINI_API_KEY belum terpasang di Environment Variables!")
 
             response = gemini_client.models.generate_content(
-                model="gemini-1.5-flash",
-                contents=pesan_text,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=TransaksiList,
-                    system_instruction="Kamu adalah asisten keuangan. Ekstrak pesan menjadi data transaksi."
+    model="gemini-2.0-flash",
+    contents=pesan_text,
+    config=types.GenerateContentConfig(
+        response_mime_type="application/json",
+        response_schema=TransaksiList,
+        system_instruction="Kamu adalah asisten keuangan. Ekstrak pesan menjadi data transaksi."
                 )
             )
             
